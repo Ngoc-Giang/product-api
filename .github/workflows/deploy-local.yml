@@ -1,0 +1,77 @@
+name: Product API Local CD
+
+on:
+  workflow_run:
+    workflows:
+      - Product API CD
+    types:
+      - completed
+
+jobs:
+  deploy-local:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        shell: powershell
+        run: |
+          docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}"
+
+      - name: Pull latest Product API image
+        shell: powershell
+        run: |
+          docker pull ngocgiang1900/product-api:latest
+
+      - name: Deploy with Docker Compose
+        shell: powershell
+        run: |
+          docker compose -f docker-compose-prod.yaml up -d
+
+      - name: Check container status
+        shell: powershell
+        run: |
+          docker compose -f docker-compose-prod.yaml ps
+
+      - name: Wait for Product API healthcheck
+        shell: powershell
+        run: |
+          for ($i = 1; $i -le 30; $i++) {
+            $status = docker inspect product-api-prod --format '{{.State.Health.Status}}' 2>$null
+
+            Write-Host "Product API health status: $status"
+
+            if ($status -eq "healthy") {
+              Write-Host "Product API is healthy"
+              exit 0
+            }
+
+            Start-Sleep -Seconds 2
+          }
+
+          Write-Host "Product API healthcheck failed"
+          docker logs product-api-prod
+          exit 1
+
+      - name: Test Product API
+        shell: powershell
+        run: |
+          $response = Invoke-WebRequest `
+            -Uri "http://localhost:3000/health" `
+            -UseBasicParsing
+
+          Write-Host "HTTP Status: $($response.StatusCode)"
+          Write-Host "Response: $($response.Content)"
+
+          if ($response.StatusCode -ne 200) {
+            exit 1
+          }
+
+      - name: Logout Docker Hub
+        if: always()
+        shell: powershell
+        run: |
+          docker logout
