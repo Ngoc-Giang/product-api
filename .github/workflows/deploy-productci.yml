@@ -1,0 +1,99 @@
+name: Product API CD
+
+on:
+  workflow_run:
+    workflows:
+      - Product API Production CI
+    types:
+      - completed
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t ${{ secrets.DOCKERHUB_USERNAME }}/product-api:latest .
+
+      - name: Push Docker image to Docker Hub
+        run: |
+          docker push \
+            ${{ secrets.DOCKERHUB_USERNAME }}/product-api:latest
+
+      - name: Create Docker network
+        run: docker network create product-network
+
+      - name: Start MongoDB
+        run: |
+          docker run -d \
+            --name nammongodb \
+            --network product-network \
+            mongo:latest
+
+      - name: Wait for MongoDB
+        run: |
+          for i in {1..30}; do
+            if docker exec nammongodb \
+              mongosh --eval "db.adminCommand('ping')" > /dev/null 2>&1; then
+              echo "MongoDB is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "MongoDB failed to start"
+          docker logs nammongodb
+          exit 1
+
+      - name: Pull Product API image
+        run: |
+          docker pull \
+            ${{ secrets.DOCKERHUB_USERNAME }}/product-api:latest
+
+      - name: Start Product API
+        run: |
+          docker run -d \
+            --name product-api-container \
+            --network product-network \
+            -p 3000:3000 \
+            -e PORT=3000 \
+            -e MONGO_URI=mongodb://nammongodb:27017/productdb \
+            ${{ secrets.DOCKERHUB_USERNAME }}/product-api:latest
+
+      - name: Wait for Product API healthcheck
+        run: |
+          for i in {1..30}; do
+            if curl -f http://localhost:3000/health; then
+              echo "Product API is healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "Product API healthcheck failed"
+          docker logs product-api-container
+          exit 1
+
+      - name: Check container status
+        run: |
+          docker ps
+          docker inspect product-api-container \
+            --format '{{.State.Status}}'
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker rm -f product-api-container nammongodb || true
+          docker network rm product-network || true
