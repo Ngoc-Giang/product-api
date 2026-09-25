@@ -1,0 +1,85 @@
+name: Product API Production CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      mongodb:
+        image: mongo:latest
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand(\"ping\")'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Start Product API
+        env:
+          PORT: 3000
+          MONGO_URI: mongodb://localhost:27017/productdb
+        run: |
+          node server.js > server.log 2>&1 &
+          echo $! > server.pid
+
+      - name: Wait for Product API
+        run: |
+          for i in {1..30}; do
+            if curl -f http://localhost:3000/health; then
+              echo "Product API is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Product API failed to start"
+          cat server.log
+          exit 1
+
+      - name: Test Create Product
+        run: |
+          curl -f -X POST http://localhost:3000/api/products \
+            -H "Content-Type: application/json" \
+            -d '{"pid":"CI001","pname":"CI Product","price":100000,"quantity":10}'
+
+      - name: Test Get All Products
+        run: |
+          curl -f http://localhost:3000/api/products
+
+      - name: Test Get Product by PID
+        run: |
+          curl -f http://localhost:3000/api/products/CI001
+
+      - name: Test Update Product
+        run: |
+          curl -f -X PUT http://localhost:3000/api/products/CI001 \
+            -H "Content-Type: application/json" \
+            -d '{"pname":"Updated CI Product","price":200000,"quantity":20}'
+
+      - name: Test Delete Product
+        run: |
+          curl -f -X DELETE http://localhost:3000/api/products/CI001
+
+      - name: Show API logs if failed
+        if: failure()
+        run: cat server.log
