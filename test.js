@@ -1,1 +1,0 @@
-console.log("Product API CI test passed");
