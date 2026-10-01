@@ -79,6 +79,9 @@ jobs:
       - name: Test Delete Product
         run: |
           curl -f -X DELETE http://localhost:3000/api/products/CI001
+      
+      - name: Test 404
+        run: curl -f http://localhost:3000/api/products/x || echo ok
 
       - name: Show API logs if failed
         if: failure()
