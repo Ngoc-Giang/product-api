@@ -19,7 +19,8 @@ mongoose
         console.log("MongoDB connected successfully");
         app.get("/health", (req, res) => {
             res.status(200).json({
-                status: "OK"
+                status: "healthy",
+                mongodb: "connected"
             });
         });
         app.listen(PORT, () => {
